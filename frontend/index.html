@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>New York City Airbnb room type predictor</title>
+  <meta name="description" content="Describe an NYC Airbnb listing and a machine learning model predicts whether it is an entire home, a private room, or a shared room.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%2300933C'/%3E%3Ctext x='16' y='22.5' font-size='19' font-weight='700' text-anchor='middle' fill='white' font-family='Arial,sans-serif'%3EE%3C/text%3E%3C/svg%3E">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
+
+  <!-- Leaflet powers the location map. If it fails to load, the form still works. -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="page">
+
+    <header class="top">
+      <div class="brand">
+        <span class="brand-bullets" aria-hidden="true">
+          <span class="bullet" data-type="entire">E</span>
+          <span class="bullet" data-type="private">P</span>
+          <span class="bullet" data-type="shared">S</span>
+        </span>
+        <span class="brand-name">New York City Room Type Predictor</span>
+      </div>
+
+      <button type="button" class="api-status" id="apiStatus" data-state="checking"
+              title="Check the connection to the prediction server">
+        <span class="api-dot" aria-hidden="true"></span>
+        <span id="apiStatusText">Checking server</span>
+      </button>
+    </header>
+
+    <section class="intro">
+      <h1>What type of room is this listing?</h1>
+      <p>Describe an Airbnb listing in New York City. The model predicts whether it is an entire home, a private room, or a shared room, and shows how sure it is.</p>
+    </section>
+
+    <div class="workspace">
+
+      <!-- ============ Form ============ -->
+      <form id="predictForm" class="panel" novalidate>
+
+        <div class="presets">
+          <span class="presets-label" id="presetsLabel">Try an example</span>
+          <div class="presets-list" id="presets" role="group" aria-labelledby="presetsLabel"></div>
+        </div>
+
+        <!-- Location -->
+        <section class="section" aria-labelledby="h-location">
+          <div class="section-head">
+            <h2 id="h-location">Location</h2>
+            <p>Choose the borough and neighbourhood, then drop a pin on the map.</p>
+          </div>
+
+          <div class="field">
+            <span class="label" id="boroughLabel">Borough</span>
+            <div class="pills" role="radiogroup" aria-labelledby="boroughLabel">
+              <label class="pill"><input type="radio" name="neighbourhood_group" value="Bronx"><span>Bronx</span></label>
+              <label class="pill"><input type="radio" name="neighbourhood_group" value="Brooklyn"><span>Brooklyn</span></label>
+              <label class="pill"><input type="radio" name="neighbourhood_group" value="Manhattan"><span>Manhattan</span></label>
+              <label class="pill"><input type="radio" name="neighbourhood_group" value="Queens"><span>Queens</span></label>
+              <label class="pill"><input type="radio" name="neighbourhood_group" value="Staten Island"><span>Staten Island</span></label>
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="label" for="neighbourhood">Neighbourhood</label>
+            <div class="select-wrap" id="wrap-neighbourhood">
+              <select id="neighbourhood" name="neighbourhood" aria-describedby="error-neighbourhood"></select>
+            </div>
+            <p class="error" id="error-neighbourhood" hidden></p>
+          </div>
+
+          <div class="field">
+            <span class="label" id="mapLabel">Exact spot</span>
+            <div class="map" id="map" aria-labelledby="mapLabel"></div>
+
+            <div class="coords">
+              <div class="coord">
+                <label for="latitude">Latitude</label>
+                <div class="num" id="wrap-latitude">
+                  <input type="number" id="latitude" name="latitude" step="0.0001" inputmode="decimal"
+                         aria-describedby="error-latitude coordNote">
+                </div>
+                <p class="error" id="error-latitude" hidden></p>
+              </div>
+              <div class="coord">
+                <label for="longitude">Longitude</label>
+                <div class="num" id="wrap-longitude">
+                  <input type="number" id="longitude" name="longitude" step="0.0001" inputmode="decimal"
+                         aria-describedby="error-longitude coordNote">
+                </div>
+                <p class="error" id="error-longitude" hidden></p>
+              </div>
+            </div>
+            <p class="hint" id="coordNote">Click the map or drag the pin to set the exact spot.</p>
+          </div>
+        </section>
+
+        <!-- Price and stay -->
+        <section class="section" aria-labelledby="h-stay">
+          <div class="section-head">
+            <h2 id="h-stay">Price and stay</h2>
+            <p>What a guest pays and how long they have to book for.</p>
+          </div>
+
+          <div class="fields">
+            <div class="field slider-field">
+              <div class="field-head">
+                <label class="label" for="price">Price per night</label>
+                <div class="num" id="wrap-price">
+                  <span class="affix">$</span>
+                  <input type="number" id="price" name="price" step="1" inputmode="decimal"
+                         aria-describedby="hint-price error-price">
+                </div>
+              </div>
+              <input type="range" class="range" min="10" max="1000" step="5" aria-label="Price per night, slider">
+              <div class="scale" aria-hidden="true"><span>$10</span><span>$1,000+</span></div>
+              <p class="hint" id="hint-price">The typical listing costs around $106 a night.</p>
+              <p class="error" id="error-price" hidden></p>
+            </div>
+
+            <div class="field slider-field">
+              <div class="field-head">
+                <label class="label" for="minimum_nights">Minimum stay</label>
+                <div class="num" id="wrap-minimum_nights">
+                  <input type="number" id="minimum_nights" name="minimum_nights" step="1" inputmode="numeric"
+                         aria-describedby="hint-minimum_nights error-minimum_nights">
+                  <span class="affix">nights</span>
+                </div>
+              </div>
+              <input type="range" class="range" min="1" max="30" step="1" aria-label="Minimum stay, slider">
+              <div class="scale" aria-hidden="true"><span>1</span><span>30+</span></div>
+              <p class="hint" id="hint-minimum_nights">The shortest booking the host allows. Typical: 3 nights.</p>
+              <p class="error" id="error-minimum_nights" hidden></p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Reviews -->
+        <section class="section" aria-labelledby="h-reviews">
+          <div class="section-head">
+            <h2 id="h-reviews">Reviews</h2>
+            <p>How much feedback the listing has collected.</p>
+          </div>
+
+          <div class="fields">
+            <div class="field slider-field">
+              <div class="field-head">
+                <label class="label" for="number_of_reviews">Total reviews</label>
+                <div class="num" id="wrap-number_of_reviews">
+                  <input type="number" id="number_of_reviews" name="number_of_reviews" step="1" inputmode="numeric"
+                         aria-describedby="hint-number_of_reviews error-number_of_reviews">
+                </div>
+              </div>
+              <input type="range" class="range" min="0" max="300" step="1" aria-label="Total reviews, slider">
+              <div class="scale" aria-hidden="true"><span>0</span><span>300+</span></div>
+              <p class="hint" id="hint-number_of_reviews">Reviews received so far. Typical: 5.</p>
+              <p class="error" id="error-number_of_reviews" hidden></p>
+            </div>
+
+            <div class="field slider-field">
+              <div class="field-head">
+                <label class="label" for="reviews_per_month">Reviews per month</label>
+                <div class="num" id="wrap-reviews_per_month">
+                  <input type="number" id="reviews_per_month" name="reviews_per_month" step="0.01" inputmode="decimal"
+                         aria-describedby="hint-reviews_per_month error-reviews_per_month">
+                </div>
+              </div>
+              <input type="range" class="range" min="0" max="10" step="0.05" aria-label="Reviews per month, slider">
+              <div class="scale" aria-hidden="true"><span>0</span><span>10+</span></div>
+              <p class="hint" id="hint-reviews_per_month">Use 0 if the listing has no reviews yet.</p>
+              <p class="error" id="error-reviews_per_month" hidden></p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Host and availability -->
+        <section class="section" aria-labelledby="h-host">
+          <div class="section-head">
+            <h2 id="h-host">Host and availability</h2>
+            <p>Who runs the listing and how often it can be booked.</p>
+          </div>
+
+          <div class="fields">
+            <div class="field slider-field">
+              <div class="field-head">
+                <label class="label" for="calculated_host_listings_count">Host's listings</label>
+                <div class="num" id="wrap-calculated_host_listings_count">
+                  <input type="number" id="calculated_host_listings_count" name="calculated_host_listings_count" step="1" inputmode="numeric"
+                         aria-describedby="hint-calculated_host_listings_count error-calculated_host_listings_count">
+                </div>
+              </div>
+              <input type="range" class="range" min="0" max="50" step="1" aria-label="Number of listings the host manages, slider">
+              <div class="scale" aria-hidden="true"><span>0</span><span>50+</span></div>
+              <p class="hint" id="hint-calculated_host_listings_count">How many listings this host manages. Most hosts have 1.</p>
+              <p class="error" id="error-calculated_host_listings_count" hidden></p>
+            </div>
+
+            <div class="field slider-field">
+              <div class="field-head">
+                <label class="label" for="availability_365">Days available a year</label>
+                <div class="num" id="wrap-availability_365">
+                  <input type="number" id="availability_365" name="availability_365" step="1" inputmode="numeric"
+                         aria-describedby="hint-availability_365 error-availability_365">
+                  <span class="affix">days</span>
+                </div>
+              </div>
+              <input type="range" class="range" min="0" max="365" step="1" aria-label="Days available per year, slider">
+              <div class="scale" aria-hidden="true"><span>0</span><span>365</span></div>
+              <p class="hint" id="hint-availability_365"></p>
+              <p class="error" id="error-availability_365" hidden></p>
+            </div>
+          </div>
+        </section>
+
+        <div class="actions">
+          <button type="submit" class="btn-primary" id="predictBtn">
+            <span class="btn-label">Predict room type</span>
+            <span class="spinner" aria-hidden="true"></span>
+          </button>
+          <button type="button" class="btn-ghost" id="resetBtn">Reset form</button>
+        </div>
+      </form>
+
+      <!-- ============ Result ============ -->
+      <aside class="sign" id="sign" data-state="idle" aria-labelledby="signTitle">
+        <h2 class="sign-title" id="signTitle">Prediction</h2>
+
+        <div class="sign-status" aria-live="polite" aria-atomic="true">
+
+          <div class="state state-idle">
+            <p>Fill in the listing and choose <strong>Predict room type</strong>. The result appears here.</p>
+          </div>
+
+          <div class="state state-loading">
+            <span class="loading-ring" aria-hidden="true"></span>
+            <p>Running the model</p>
+          </div>
+
+          <div class="state state-result">
+            <div class="result-main">
+              <span class="bullet bullet-xl" id="resultBullet" data-type="entire" aria-hidden="true">E</span>
+              <div>
+                <p class="result-name" id="resultName">Entire home/apt</p>
+                <p class="result-confidence" id="resultConfidence"></p>
+              </div>
+            </div>
+            <p class="result-recap" id="resultRecap"></p>
+            <p class="result-note" id="resultNote" hidden></p>
+          </div>
+
+          <div class="state state-error">
+            <p class="error-title" id="errorTitle"></p>
+            <p id="errorMessage"></p>
+            <p class="error-hint" id="errorHint"></p>
+          </div>
+        </div>
+
+        <ul class="rows" id="rows">
+          <li class="row" data-type="entire">
+            <span class="bullet" aria-hidden="true">E</span>
+            <div class="row-text"><strong>Entire home/apt</strong><span>The whole place to yourself</span></div>
+            <span class="pct"></span>
+            <div class="bar" aria-hidden="true"><span class="bar-fill"></span></div>
+          </li>
+          <li class="row" data-type="private">
+            <span class="bullet" aria-hidden="true">P</span>
+            <div class="row-text"><strong>Private room</strong><span>Your own room in a shared home</span></div>
+            <span class="pct"></span>
+            <div class="bar" aria-hidden="true"><span class="bar-fill"></span></div>
+          </li>
+          <li class="row" data-type="shared">
+            <span class="bullet" aria-hidden="true">S</span>
+            <div class="row-text"><strong>Shared room</strong><span>A bed or space shared with others</span></div>
+            <span class="pct"></span>
+            <div class="bar" aria-hidden="true"><span class="bar-fill"></span></div>
+          </li>
+        </ul>
+
+        <details class="raw" id="rawBox" hidden>
+          <summary>See the API request and response</summary>
+          <pre id="rawOutput"></pre>
+        </details>
+      </aside>
+    </div>
+
+    <footer class="foot">
+      <p>Predictions come from a Random Forest classifier trained on NYC Airbnb listings. Treat them as estimates, not facts.</p>
+    </footer>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="script.js"></script>
+</body>
+</html>
