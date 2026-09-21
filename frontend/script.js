@@ -1,29 +1,16 @@
-"use strict";
 
-/* ==========================================================
-   NYC room type predictor: front-end logic
+/* 1. Settings */
 
-   1. Settings
-   2. Data (room types, boroughs, examples, validation rules)
-   3. Small helpers
-   4. Sliders and number fields
-   5. Location (borough, neighbourhood, map)
-   6. Validation
-   7. Result sign
-   8. Talking to the API
-   9. Start-up
-   ========================================================== */
-
-// Address of the FastAPI server. Change this when you deploy the API.
-const API_URL = "http://127.0.0.1:8000";
+// Address of the FastAPI server.
+// - Page served by FastAPI or deployed online: same address, so no prefix is needed.
+// - index.html opened straight from disk (file://): talk to the local server on port 8000.
+const API_URL = window.location.protocol === "file:" ? "http://127.0.0.1:8000" : "";
 
 // How long to wait for a prediction before giving up.
 const REQUEST_TIMEOUT_MS = 20000;
 
 
-/* ==========================================================
-   2. Data
-   ========================================================== */
+/* 2. Data */
 
 // predict_proba returns probabilities in the order of model.classes_.
 // For this model that order is alphabetical, which matches the list below.
@@ -99,7 +86,7 @@ const BOROUGH_CENTERS = {
 // Rough outline of the five boroughs, used to warn about pins placed elsewhere.
 const NYC_BOUNDS = { south: 40.45, north: 40.95, west: -74.3, east: -73.65 };
 
-// Starting values: typical listing from the training data.
+// Starting values: a typical listing from the training data.
 const DEFAULTS = {
   neighbourhood_group: "Brooklyn",
   neighbourhood: "Williamsburg",
@@ -116,7 +103,7 @@ const DEFAULTS = {
 // One-click examples. Each one fills the form and runs a prediction.
 const PRESETS = [
   {
-    name: "Loft in SoHo",
+    name: "SoHo loft",
     values: {
       neighbourhood_group: "Manhattan", neighbourhood: "SoHo",
       latitude: 40.7233, longitude: -74.003,
@@ -125,7 +112,7 @@ const PRESETS = [
     },
   },
   {
-    name: "Room in Bushwick",
+    name: "Bushwick room",
     values: {
       neighbourhood_group: "Brooklyn", neighbourhood: "Bushwick",
       latitude: 40.6944, longitude: -73.9213,
@@ -134,7 +121,7 @@ const PRESETS = [
     },
   },
   {
-    name: "Hostel bed in Hell's Kitchen",
+    name: "Hostel bed",
     values: {
       neighbourhood_group: "Manhattan", neighbourhood: "Hell's Kitchen",
       latitude: 40.7638, longitude: -73.9918,
@@ -148,10 +135,17 @@ const PRESETS = [
 const SLIDER_FIELDS = [
   "price",
   "minimum_nights",
+  "availability_365",
   "number_of_reviews",
   "reviews_per_month",
   "calculated_host_listings_count",
-  "availability_365",
+];
+
+// The three steps on phones and tablets, and which fields belong to each.
+const STEPS = [
+  { title: "Location",         fields: ["neighbourhood", "latitude", "longitude"] },
+  { title: "Price and stay",   fields: ["price", "minimum_nights", "availability_365"] },
+  { title: "Reviews and host", fields: ["number_of_reviews", "reviews_per_month", "calculated_host_listings_count"] },
 ];
 
 // Validation rules. These mirror the limits in schemas.py, so the server
@@ -161,10 +155,10 @@ const RULES = {
   longitude: { min: -180, max: 180, message: "Longitude must be between -180 and 180." },
   price:     { min: 0, exclusiveMin: true, message: "Enter a price above $0." },
   minimum_nights: { int: true, min: 1, max: 365, message: "Enter a whole number of nights from 1 to 365." },
+  availability_365: { int: true, min: 0, max: 365, message: "Enter a whole number of days from 0 to 365." },
   number_of_reviews: { int: true, min: 0, message: "Enter a whole number, 0 or higher." },
   reviews_per_month: { min: 0, message: "Enter 0 or higher." },
   calculated_host_listings_count: { int: true, min: 0, message: "Enter a whole number, 0 or higher." },
-  availability_365: { int: true, min: 0, max: 365, message: "Enter a whole number of days from 0 to 365." },
 };
 
 const FIELD_LABELS = {
@@ -174,24 +168,22 @@ const FIELD_LABELS = {
   longitude: "Longitude",
   price: "Price per night",
   minimum_nights: "Minimum stay",
+  availability_365: "Days available a year",
   number_of_reviews: "Total reviews",
   reviews_per_month: "Reviews per month",
-  calculated_host_listings_count: "Host's listings",
-  availability_365: "Days available a year",
+  calculated_host_listings_count: "Listings by this host",
 };
 
 
-/* ==========================================================
-   3. Small helpers
-   ========================================================== */
+/* 3. Small helpers */
 
+const app = document.getElementById("app");
 const form = document.getElementById("predictForm");
 const neighbourhoodSelect = document.getElementById("neighbourhood");
 const latInput = document.getElementById("latitude");
 const lngInput = document.getElementById("longitude");
 const coordNote = document.getElementById("coordNote");
 const predictBtn = document.getElementById("predictBtn");
-const resetBtn = document.getElementById("resetBtn");
 const sign = document.getElementById("sign");
 const rowEls = Array.from(document.querySelectorAll("#rows .row"));
 
@@ -201,6 +193,12 @@ const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
 const prefersReducedMotion = () =>
   window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// True on phones and tablets, where the form is split into steps.
+const stepsQuery = window.matchMedia
+  ? window.matchMedia("(max-width: 1099px)")
+  : { matches: false, addEventListener() {} };
+const usesSteps = () => stepsQuery.matches;
 
 // Trim coordinates to 5 decimals (about 1 metre) without trailing zeros.
 const roundCoord = (n) => String(Math.round(n * 1e5) / 1e5);
@@ -219,9 +217,7 @@ function formatPercent(p) {
 }
 
 
-/* ==========================================================
-   4. Sliders and number fields
-   ========================================================== */
+/* 4. Sliders and number fields */
 
 function paintRange(range) {
   const min = Number(range.min);
@@ -295,9 +291,7 @@ function updateAvailabilityHint() {
 }
 
 
-/* ==========================================================
-   5. Location
-   ========================================================== */
+/* 5. Location */
 
 let map = null;
 let marker = null;
@@ -399,6 +393,11 @@ function moveMarker(lat, lng, { view = false, zoom, panIfHidden = false } = {}) 
   }
 }
 
+// The map needs to re-measure itself after its container was hidden or resized.
+function refreshMap() {
+  if (map) requestAnimationFrame(() => map.invalidateSize());
+}
+
 function initMap() {
   const mapEl = document.getElementById("map");
 
@@ -431,13 +430,12 @@ function initMap() {
 
   map.on("click", (event) => setCoords(event.latlng.lat, event.latlng.lng));
 
-  window.addEventListener("load", () => map.invalidateSize());
+  window.addEventListener("load", refreshMap);
+  window.addEventListener("resize", refreshMap);
 }
 
 
-/* ==========================================================
-   6. Validation
-   ========================================================== */
+/* 6. Validation */
 
 function setError(name, message) {
   const el = document.getElementById("error-" + name);
@@ -500,10 +498,66 @@ function collectPayload() {
   return { payload, errors };
 }
 
+const stepOfField = (name) => STEPS.findIndex((step) => step.fields.includes(name)) + 1;
 
-/* ==========================================================
-   7. Result sign
-   ========================================================== */
+function showFieldErrors(errors) {
+  errors.forEach(({ name, message }) => setError(name, message));
+  const first = form.elements[errors[0].name];
+  if (first && first.focus) first.focus();
+}
+
+
+/* 7. Steps (phones and tablets) */
+
+let currentStep = 1;
+
+const stepLabel = document.getElementById("stepLabel");
+const progressBars = Array.from(document.querySelectorAll(".progress span"));
+
+// view is "step1", "step2", "step3" or "result".
+// On desktop everything is visible and the CSS ignores this value.
+function setView(view, { focusHeading = false } = {}) {
+  app.dataset.view = view;
+
+  if (view.startsWith("step")) {
+    currentStep = Number(view.slice(4));
+    stepLabel.textContent = `Step ${currentStep} of ${STEPS.length}`;
+    progressBars.forEach((bar, i) => {
+      bar.classList.toggle("is-done", i < currentStep - 1);
+      bar.classList.toggle("is-current", i === currentStep - 1);
+    });
+  }
+
+  if (view === "step1") refreshMap();
+
+  if (focusHeading && usesSteps()) {
+    const heading = view === "result"
+      ? document.getElementById("signTitle")
+      : document.querySelector(`.step[data-step="${currentStep}"] h2`);
+    if (heading) heading.focus({ preventScroll: true });
+  }
+}
+
+// Checks only the fields on the current step.
+function stepIsValid(step) {
+  clearAllErrors();
+  const { errors } = collectPayload();
+  const mine = errors.filter((error) => STEPS[step - 1].fields.includes(error.name));
+  if (mine.length) showFieldErrors(mine);
+  return mine.length === 0;
+}
+
+function goNext() {
+  if (!stepIsValid(currentStep)) return;
+  setView("step" + Math.min(currentStep + 1, STEPS.length), { focusHeading: true });
+}
+
+function goBack() {
+  setView("step" + Math.max(currentStep - 1, 1), { focusHeading: true });
+}
+
+
+/* 8. Result sign */
 
 function setSignState(state) {
   sign.dataset.state = state;
@@ -540,14 +594,14 @@ function showError({ title, message, hint = "" }) {
 
 // Turn the API response into an array of probabilities, one per room type.
 function readProbabilities(data) {
-  // Current API: { probability: [p0, p1, p2] } in model.classes_ order.
-  if (Array.isArray(data.probability) && data.probability.length === ROOM_TYPES.length) {
-    return data.probability.map(Number);
-  }
-  // Also accept { probabilities: { "Private room": 0.7, ... } } in case the API adds labels later.
+  // { probabilities: { "Private room": 0.7, ... } } is matched by label.
   if (data.probabilities && typeof data.probabilities === "object") {
     const list = ROOM_TYPES.map((type) => Number(data.probabilities[type.label]));
     if (list.every(Number.isFinite)) return list;
+  }
+  // { probability: [p0, p1, p2] } follows model.classes_ order.
+  if (Array.isArray(data.probability) && data.probability.length === ROOM_TYPES.length) {
+    return data.probability.map(Number);
   }
   return null;
 }
@@ -618,17 +672,8 @@ function showRaw(payload, responseBody) {
   document.getElementById("rawBox").hidden = false;
 }
 
-function scrollToResultOnSmallScreens() {
-  const isSingleColumn = window.matchMedia && window.matchMedia("(max-width: 980px)").matches;
-  if (isSingleColumn && sign.scrollIntoView) {
-    sign.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
-  }
-}
 
-
-/* ==========================================================
-   8. Talking to the API
-   ========================================================== */
+/* 9. Talking to the API */
 
 class ApiError extends Error {
   constructor(status, body) {
@@ -656,7 +701,7 @@ async function checkApi() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
   try {
-    const response = await fetch(API_URL + "/", { signal: controller.signal });
+    const response = await fetch(API_URL + "/health", { signal: controller.signal });
     setApiStatus(response.ok ? "online" : "offline");
   } catch {
     setApiStatus("offline");
@@ -687,6 +732,7 @@ function handleValidationError(body) {
   showError({
     title: "The server rejected some values",
     message: lines.length ? lines.join(". ") + "." : "Check the highlighted fields and try again.",
+    hint: "Choose Edit listing to fix them.",
   });
 }
 
@@ -695,15 +741,16 @@ async function predict() {
   const { payload, errors } = collectPayload();
 
   if (errors.length) {
-    errors.forEach(({ name, message }) => setError(name, message));
-    const first = form.elements[errors[0].name];
-    if (first && first.focus) first.focus();
+    // On phones, jump to the step that has the first problem.
+    if (usesSteps()) setView("step" + stepOfField(errors[0].name));
+    showFieldErrors(errors);
     return;
   }
 
   const thisRequest = ++requestId;
   setBusy(true);
   showLoading();
+  if (usesSteps()) setView("result", { focusHeading: true });
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -724,7 +771,6 @@ async function predict() {
     setApiStatus("online");
     showResult(body, payload);
     showRaw(payload, body);
-    scrollToResultOnSmallScreens();
   } catch (error) {
     if (thisRequest !== requestId) return;
 
@@ -747,11 +793,10 @@ async function predict() {
       setApiStatus("offline");
       showError({
         title: "Can't reach the prediction server",
-        message: `Nothing answered at ${API_URL}.`,
+        message: `Nothing answered at ${API_URL || "this address"}.`,
         hint: "Start the API with: uvicorn app.main:app --reload. If it runs somewhere else, update API_URL at the top of script.js.",
       });
     }
-    scrollToResultOnSmallScreens();
   } finally {
     clearTimeout(timer);
     if (thisRequest === requestId) setBusy(false);
@@ -759,9 +804,7 @@ async function predict() {
 }
 
 
-/* ==========================================================
-   9. Start-up
-   ========================================================== */
+/* 10. Start-up */
 
 function applyValues(values) {
   const radio = form.querySelector(`input[name="neighbourhood_group"][value="${values.neighbourhood_group}"]`);
@@ -774,18 +817,21 @@ function applyValues(values) {
   clearAllErrors();
 }
 
+// The example chips appear in the header (desktop) and on step 1 (phones).
 function renderPresets() {
-  const list = document.getElementById("presets");
-  PRESETS.forEach((preset) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "chip";
-    button.textContent = preset.name;
-    button.addEventListener("click", () => {
-      applyValues(preset.values);
-      predict();
+  ["presetsTop", "presetsStep"].forEach((id) => {
+    const list = document.getElementById(id);
+    PRESETS.forEach((preset) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "chip";
+      button.textContent = preset.name;
+      button.addEventListener("click", () => {
+        applyValues(preset.values);
+        predict();
+      });
+      list.appendChild(button);
     });
-    list.appendChild(button);
   });
 }
 
@@ -794,19 +840,32 @@ function resetForm() {
   setBusy(false);
   applyValues(DEFAULTS);
   showIdle();
+  setView("step1", { focusHeading: true });
 }
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
-  predict();
+  // Pressing Enter on an early step moves on instead of predicting.
+  if (usesSteps() && currentStep < STEPS.length) goNext();
+  else predict();
 });
 
-resetBtn.addEventListener("click", resetForm);
+document.getElementById("nextBtn").addEventListener("click", goNext);
+document.getElementById("backBtn").addEventListener("click", goBack);
+document.getElementById("resetBtn").addEventListener("click", resetForm);
+document.getElementById("restartBtn").addEventListener("click", resetForm);
+document.getElementById("editBtn").addEventListener("click", () => {
+  setView("step" + STEPS.length, { focusHeading: true });
+});
 apiStatus.addEventListener("click", checkApi);
+
+// Switching between the phone layout and the desktop layout (rotating a tablet, resizing a window).
+stepsQuery.addEventListener("change", refreshMap);
 
 setupSliders();
 setupLocationInputs();
 initMap();
 renderPresets();
 applyValues(DEFAULTS);
+setView("step1");
 checkApi();
